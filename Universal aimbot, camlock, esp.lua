@@ -6,9 +6,7 @@ local UserInputService = game:GetService("UserInputService")
 local camera = workspace.CurrentCamera
 local localPlayer = Players.LocalPlayer
 
--- Force Rayfield to work on mobile
-getgenv().UseOrder = true
-local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/UI-Interface/CustomFIeld/main/RayField.lua'))()
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local settings = {
     espEnabled = false,
