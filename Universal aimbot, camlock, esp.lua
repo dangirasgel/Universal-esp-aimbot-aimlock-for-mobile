@@ -1,13 +1,14 @@
 -- Place in a LocalScript inside StarterPlayerScripts
 
-local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/UI-Interface/CustomFIeld/main/RayField.lua'))()
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local ContextActionService = game:GetService("ContextActionService")
 local camera = workspace.CurrentCamera
 local localPlayer = Players.LocalPlayer
+
+-- Force Rayfield to work on mobile
+getgenv().UseOrder = true
+local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/UI-Interface/CustomFIeld/main/RayField.lua'))()
 
 local settings = {
     espEnabled = false,
@@ -38,9 +39,6 @@ local targetVisible = false
 local aimbotVisible = false
 local camlockTarget = nil
 local espObjects = {}
-
--- Mobile detection
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 local espGui = Instance.new("ScreenGui")
 espGui.Name = "BoxESP"
@@ -308,78 +306,6 @@ local function disableCamlock()
 end
 
 -------------------------------------------------
--- Mobile buttons
--------------------------------------------------
-if isMobile then
-    local mobileGui = Instance.new("ScreenGui")
-    mobileGui.Name = "MobileButtons"
-    mobileGui.ResetOnSpawn = false
-    mobileGui.IgnoreGuiInset = true
-    mobileGui.Parent = localPlayer.PlayerGui
-
-    local function makeMobileButton(labelText, color, xPos, yPos, callback)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 70, 0, 70)
-        btn.Position = UDim2.new(xPos, 0, yPos, 0)
-        btn.BackgroundColor3 = color
-        btn.BackgroundTransparency = 0.3
-        btn.Text = labelText
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.TextSize = 11
-        btn.Font = Enum.Font.GothamBold
-        btn.BorderSizePixel = 0
-        btn.ZIndex = 20
-        btn.Parent = mobileGui
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 10)
-        corner.Parent = btn
-
-        btn.MouseButton1Click:Connect(callback)
-        return btn
-    end
-
-    -- ESP button
-    local espBtnLabel = "ESP\nOFF"
-    local espMobileBtn = makeMobileButton("ESP\nOFF", Color3.fromRGB(60, 60, 60), 0.01, 0.6, function()
-        settings.espEnabled = not settings.espEnabled
-        espMobileBtn.Text = settings.espEnabled and "ESP\nON" or "ESP\nOFF"
-        espMobileBtn.BackgroundColor3 = settings.espEnabled and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(60, 60, 60)
-        if not settings.espEnabled then
-            for _, c in pairs(espGui:GetChildren()) do
-                if c.Name ~= "FOVFrame" and c.Name ~= "AimbotFOVFrame" then
-                    c.Visible = false
-                end
-            end
-        end
-    end)
-
-    -- Camlock button
-    local camlockMobileBtn = makeMobileButton("CAM\nOFF", Color3.fromRGB(60, 60, 60), 0.01, 0.7, function()
-        if not settings.camlockEnabled then
-            enableCamlock()
-            camlockMobileBtn.Text = "CAM\nON"
-            camlockMobileBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-        else
-            disableCamlock()
-            camlockMobileBtn.Text = "CAM\nOFF"
-            camlockMobileBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-        end
-    end)
-
-    -- Aimbot button
-    local aimbotMobileBtn = makeMobileButton("AIM\nOFF", Color3.fromRGB(60, 60, 60), 0.01, 0.8, function()
-        settings.aimbotEnabled = not settings.aimbotEnabled
-        aimbotMobileBtn.Text = settings.aimbotEnabled and "AIM\nON" or "AIM\nOFF"
-        aimbotMobileBtn.BackgroundColor3 = settings.aimbotEnabled and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(60, 60, 60)
-        if not settings.aimbotEnabled then
-            aimbotVisible = false
-            for i = 1, FOV_SEGMENTS do aimbotSegs[i].Visible = false end
-        end
-    end)
-end
-
--------------------------------------------------
 -- Rayfield Window
 -------------------------------------------------
 local Window = Rayfield:CreateWindow({
@@ -441,42 +367,6 @@ local ESPTeamToggle = ESPTab:CreateToggle({
         settings.espTeamCheck = val
     end,
 })
-
--- Only show keybinds section on non-mobile
-if not isMobile then
-    ESPTab:CreateSection("Keybinds", false)
-
-    ESPTab:CreateKeybind({
-        Name = "Toggle ESP",
-        CurrentKeybind = "Z",
-        HoldToInteract = false,
-        Flag = "ESPKeybind",
-        Callback = function()
-            local v = not settings.espEnabled
-            settings.espEnabled = v
-            ESPToggle:Set(v)
-            if not v then
-                for _, c in pairs(espGui:GetChildren()) do
-                    if c.Name ~= "FOVFrame" and c.Name ~= "AimbotFOVFrame" then
-                        c.Visible = false
-                    end
-                end
-            end
-        end,
-    })
-
-    ESPTab:CreateKeybind({
-        Name = "Toggle Team Check",
-        CurrentKeybind = "X",
-        HoldToInteract = false,
-        Flag = "ESPTeamKeybind",
-        Callback = function()
-            local v = not settings.espTeamCheck
-            settings.espTeamCheck = v
-            ESPTeamToggle:Set(v)
-        end,
-    })
-end
 
 -------------------------------------------------
 -- TAB 2: Camlock
@@ -574,44 +464,6 @@ CamlockTab:CreateSlider({
     end,
 })
 
-if not isMobile then
-    CamlockTab:CreateSection("Keybinds", false)
-
-    CamlockTab:CreateKeybind({
-        Name = "Toggle Camlock",
-        CurrentKeybind = "E",
-        HoldToInteract = false,
-        Flag = "CamlockKeybind",
-        Callback = function()
-            local v = not settings.camlockEnabled
-            CamlockToggle:Set(v)
-            if v then
-                enableCamlock()
-                Rayfield:Notify({
-                    Title = "Cam Lock ON",
-                    Content = camlockTarget and ("Locked: " .. camlockTarget.Name) or "Searching...",
-                    Duration = 2,
-                    Image = 4483362458,
-                })
-            else
-                disableCamlock()
-            end
-        end,
-    })
-
-    CamlockTab:CreateKeybind({
-        Name = "Toggle Wall Check",
-        CurrentKeybind = "R",
-        HoldToInteract = false,
-        Flag = "CamlockWallKeybind",
-        Callback = function()
-            local v = not settings.camlockWallCheck
-            settings.camlockWallCheck = v
-            CamlockWallToggle:Set(v)
-        end,
-    })
-end
-
 -------------------------------------------------
 -- TAB 3: Aimbot
 -------------------------------------------------
@@ -698,32 +550,6 @@ AimbotTab:CreateSlider({
         settings.aimbotFovRadius = val
     end,
 })
-
-if not isMobile then
-    AimbotTab:CreateSection("Keybinds", false)
-
-    AimbotTab:CreateKeybind({
-        Name = "Toggle Aimbot",
-        CurrentKeybind = "F",
-        HoldToInteract = false,
-        Flag = "AimbotKeybind",
-        Callback = function()
-            local v = not settings.aimbotEnabled
-            settings.aimbotEnabled = v
-            AimbotToggle:Set(v)
-            if not v then
-                aimbotVisible = false
-                for i = 1, FOV_SEGMENTS do aimbotSegs[i].Visible = false end
-            end
-            Rayfield:Notify({
-                Title = v and "Aimbot ON" or "Aimbot OFF",
-                Content = v and "Aimbot is now active." or "Aimbot disabled.",
-                Duration = 2,
-                Image = 4483362458,
-            })
-        end,
-    })
-end
 
 -------------------------------------------------
 -- TAB 4: Misc
