@@ -23,6 +23,8 @@ local settings = {
     aimbotKillCheck = true,
     aimbotFovRadius = 120,
     aimbotFovVisible = false,
+    triggerbotEnabled = false,
+    triggerbotWallCheck = false,
 }
 
 local MAX_DISTANCE = 500
@@ -37,6 +39,9 @@ local targetVisible = false
 local aimbotVisible = false
 local camlockTarget = nil
 local espObjects = {}
+local configName = ""
+local configDropdown = nil
+local selectedConfig = ""
 
 local espGui = Instance.new("ScreenGui")
 espGui.Name = "BoxESP"
@@ -90,7 +95,6 @@ fovFrame.BorderSizePixel = 0
 fovFrame.Size = UDim2.new(1, 0, 1, 0)
 fovFrame.ZIndex = 10
 fovFrame.Parent = espGui
-
 local camlockSegs = createCircle(fovFrame, FOV_COLOR)
 
 local aimbotFovFrame = Instance.new("Frame")
@@ -100,7 +104,6 @@ aimbotFovFrame.BorderSizePixel = 0
 aimbotFovFrame.Size = UDim2.new(1, 0, 1, 0)
 aimbotFovFrame.ZIndex = 10
 aimbotFovFrame.Parent = espGui
-
 local aimbotSegs = createCircle(aimbotFovFrame, AIMBOT_FOV_COLOR)
 
 local function updateCamlockFOV()
@@ -157,7 +160,7 @@ local function getDistance(character)
     return 0
 end
 
-local function getClosestTarget(useTeamCheck, useWallCheck, fovRadius)
+local function getClosestInFOV(useTeamCheck, useWallCheck, fovRadius)
     local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
     local closest = nil
     local closestDist = math.huge
@@ -212,6 +215,148 @@ local function getAimbotTarget()
         end
     end
     return closest
+end
+
+-------------------------------------------------
+-- Triggerbot
+-------------------------------------------------
+local function isAnyPlayerOnCrosshair()
+    local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    local localChar = localPlayer.Character
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == localPlayer then continue end
+        local character = player.Character
+        if not character then continue end
+        local hum = character:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        local parts = {
+            character:FindFirstChild("Head"),
+            character:FindFirstChild("HumanoidRootPart"),
+            character:FindFirstChild("UpperTorso"),
+            character:FindFirstChild("Torso"),
+        }
+        for _, part in ipairs(parts) do
+            if not part then continue end
+            local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+            if not onScreen then continue end
+            if (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude < 25 then
+                if settings.triggerbotWallCheck then
+                    if localChar and canSeeTarget(localChar, character) then
+                        return true
+                    end
+                else
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        if settings.triggerbotEnabled and UserInputService.WindowFocused then
+            if isAnyPlayerOnCrosshair() then
+                pcall(mouse1click)
+                task.wait(0.016)
+            else
+                task.wait(0.01)
+            end
+        else
+            task.wait(0.1)
+        end
+    end
+end)
+
+-------------------------------------------------
+-- Config system
+-------------------------------------------------
+local configFolder = "AepxyzoHub"
+local HttpService = game:GetService("HttpService")
+
+local function ensureFolder()
+    pcall(function()
+        if not isfolder(configFolder) then
+            makefolder(configFolder)
+        end
+    end)
+end
+
+local function getConfigPath(name)
+    return configFolder .. "/" .. name .. ".json"
+end
+
+local function saveConfig(name)
+    ensureFolder()
+    local data = {}
+    for k, v in pairs(settings) do
+        data[k] = v
+    end
+    local ok = pcall(function()
+        writefile(getConfigPath(name), HttpService:JSONEncode(data))
+    end)
+    return ok
+end
+
+local function loadConfig(name)
+    ensureFolder()
+    local path = getConfigPath(name)
+    local exists = false
+    pcall(function() exists = isfile(path) end)
+    if not exists then return false end
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(readfile(path))
+    end)
+    if ok and type(data) == "table" then
+        for k, v in pairs(data) do
+            if settings[k] ~= nil then
+                settings[k] = v
+            end
+        end
+        return true
+    end
+    return false
+end
+
+local function deleteConfig(name)
+    ensureFolder()
+    local path = getConfigPath(name)
+    local ok = false
+    pcall(function()
+        if isfile(path) then
+            delfile(path)
+            ok = true
+        end
+    end)
+    return ok
+end
+
+local function getConfigList()
+    ensureFolder()
+    local list = {}
+    pcall(function()
+        for _, f in ipairs(listfiles(configFolder)) do
+            local name = f:match("([^/\\]+)%.json$")
+            if name then
+                table.insert(list, name)
+            end
+        end
+    end)
+    return list
+end
+
+local function refreshDropdown()
+    if not configDropdown then return end
+    pcall(function()
+        local list = getConfigList()
+        if #list > 0 then
+            configDropdown:Refresh(list, list[1])
+            selectedConfig = list[1]
+        else
+            configDropdown:Refresh({"No configs"}, "No configs")
+            selectedConfig = ""
+        end
+    end)
 end
 
 local function createPlayerESP(player)
@@ -293,7 +438,7 @@ end
 
 local function enableCamlock()
     settings.camlockEnabled = true
-    camlockTarget = getClosestTarget(settings.camlockTeamCheck, settings.camlockWallCheck, settings.fovRadius)
+    camlockTarget = getClosestInFOV(settings.camlockTeamCheck, settings.camlockWallCheck, settings.fovRadius)
     targetVisible = false
 end
 
@@ -336,7 +481,6 @@ local Window = Rayfield:CreateWindow({
 -- TAB 1: ESP
 -------------------------------------------------
 local ESPTab = Window:CreateTab("ESP", 4483362458)
-
 ESPTab:CreateSection("Visuals", false)
 
 local ESPToggle = ESPTab:CreateToggle({
@@ -358,11 +502,41 @@ local ESPToggle = ESPTab:CreateToggle({
 
 local ESPTeamToggle = ESPTab:CreateToggle({
     Name = "Team Check",
-    Info = "Hides ESP boxes for teammates.",
     CurrentValue = false,
     Flag = "ESPTeamToggle",
-    Callback = function(val)
-        settings.espTeamCheck = val
+    Callback = function(val) settings.espTeamCheck = val end,
+})
+
+ESPTab:CreateSection("Keybinds", false)
+
+ESPTab:CreateKeybind({
+    Name = "Toggle ESP",
+    CurrentKeybind = "Z",
+    HoldToInteract = false,
+    Flag = "ESPKeybind",
+    Callback = function()
+        local v = not settings.espEnabled
+        settings.espEnabled = v
+        ESPToggle:Set(v)
+        if not v then
+            for _, c in pairs(espGui:GetChildren()) do
+                if c.Name ~= "FOVFrame" and c.Name ~= "AimbotFOVFrame" then
+                    c.Visible = false
+                end
+            end
+        end
+    end,
+})
+
+ESPTab:CreateKeybind({
+    Name = "Toggle Team Check",
+    CurrentKeybind = "X",
+    HoldToInteract = false,
+    Flag = "ESPTeamKeybind",
+    Callback = function()
+        local v = not settings.espTeamCheck
+        settings.espTeamCheck = v
+        ESPTeamToggle:Set(v)
     end,
 })
 
@@ -370,12 +544,10 @@ local ESPTeamToggle = ESPTab:CreateToggle({
 -- TAB 2: Camlock
 -------------------------------------------------
 local CamlockTab = Window:CreateTab("Camlock", 4483362458)
-
 CamlockTab:CreateSection("Aimlock", false)
 
 local CamlockToggle = CamlockTab:CreateToggle({
     Name = "Enable Camlock",
-    Info = "Locks camera onto nearest player in FOV.",
     CurrentValue = false,
     Flag = "CamlockToggle",
     Callback = function(val)
@@ -403,29 +575,22 @@ CamlockTab:CreateSection("Filters", false)
 
 local CamlockWallToggle = CamlockTab:CreateToggle({
     Name = "Wall Check",
-    Info = "Pauses lock when target is behind a wall.",
     CurrentValue = false,
     Flag = "CamlockWallToggle",
-    Callback = function(val)
-        settings.camlockWallCheck = val
-    end,
+    Callback = function(val) settings.camlockWallCheck = val end,
 })
 
 local CamlockTeamToggle = CamlockTab:CreateToggle({
     Name = "Team Check",
-    Info = "Ignores teammates.",
     CurrentValue = false,
     Flag = "CamlockTeamToggle",
-    Callback = function(val)
-        settings.camlockTeamCheck = val
-    end,
+    Callback = function(val) settings.camlockTeamCheck = val end,
 })
 
 CamlockTab:CreateSection("FOV Settings", false)
 
-local FOVVisibleToggle = CamlockTab:CreateToggle({
+CamlockTab:CreateToggle({
     Name = "Show FOV Circle",
-    Info = "Shows the FOV circle. OFF by default.",
     CurrentValue = false,
     Flag = "FOVVisibleToggle",
     Callback = function(val)
@@ -438,27 +603,45 @@ local FOVVisibleToggle = CamlockTab:CreateToggle({
 
 CamlockTab:CreateSlider({
     Name = "FOV Radius",
-    Info = "Radius of the camlock FOV circle.",
     Range = {10, 400},
     Increment = 1,
     Suffix = "px",
     CurrentValue = 120,
     Flag = "FOVSlider",
-    Callback = function(val)
-        settings.fovRadius = val
-    end,
+    Callback = function(val) settings.fovRadius = val end,
 })
 
 CamlockTab:CreateSlider({
     Name = "Lock Smoothness",
-    Info = "How smoothly the camera moves to target.",
     Range = {1, 20},
     Increment = 1,
     Suffix = "",
     CurrentValue = 2,
     Flag = "CamlockSmoothSlider",
-    Callback = function(val)
-        settings.camlockSmooth = val / 100
+    Callback = function(val) settings.camlockSmooth = val / 100 end,
+})
+
+CamlockTab:CreateSection("Keybinds", false)
+
+CamlockTab:CreateKeybind({
+    Name = "Toggle Camlock",
+    CurrentKeybind = "E",
+    HoldToInteract = false,
+    Flag = "CamlockKeybind",
+    Callback = function()
+        local v = not settings.camlockEnabled
+        CamlockToggle:Set(v)
+        if v then
+            enableCamlock()
+            Rayfield:Notify({
+                Title = "Cam Lock ON",
+                Content = camlockTarget and ("Locked: " .. camlockTarget.Name) or "Searching...",
+                Duration = 2,
+                Image = 4483362458,
+            })
+        else
+            disableCamlock()
+        end
     end,
 })
 
@@ -466,12 +649,10 @@ CamlockTab:CreateSlider({
 -- TAB 3: Aimbot
 -------------------------------------------------
 local AimbotTab = Window:CreateTab("Aimbot", 4483362458)
-
 AimbotTab:CreateSection("Aimbot", false)
 
 local AimbotToggle = AimbotTab:CreateToggle({
     Name = "Enable Aimbot",
-    Info = "Instantly snaps aim to nearest player in FOV.",
     CurrentValue = false,
     Flag = "AimbotToggle",
     Callback = function(val)
@@ -482,7 +663,7 @@ local AimbotToggle = AimbotTab:CreateToggle({
         end
         Rayfield:Notify({
             Title = val and "Aimbot ON" or "Aimbot OFF",
-            Content = val and "Aimbot is now active." or "Aimbot disabled.",
+            Content = val and "Aimbot active." or "Aimbot disabled.",
             Duration = 2,
             Image = 4483362458,
         })
@@ -493,39 +674,30 @@ AimbotTab:CreateSection("Filters", false)
 
 local AimbotTeamToggle = AimbotTab:CreateToggle({
     Name = "Team Check",
-    Info = "Ignores teammates.",
     CurrentValue = false,
     Flag = "AimbotTeamToggle",
-    Callback = function(val)
-        settings.aimbotTeamCheck = val
-    end,
+    Callback = function(val) settings.aimbotTeamCheck = val end,
 })
 
 local AimbotWallToggle = AimbotTab:CreateToggle({
     Name = "Wall Check",
-    Info = "Won't aim at players behind walls.",
     CurrentValue = false,
     Flag = "AimbotWallToggle",
-    Callback = function(val)
-        settings.aimbotWallCheck = val
-    end,
+    Callback = function(val) settings.aimbotWallCheck = val end,
 })
 
 local AimbotKillToggle = AimbotTab:CreateToggle({
     Name = "Kill Check",
-    Info = "Skips dead players, re-targets next alive. Aimbot stays ON.",
+    Info = "Skips dead players. Aimbot stays ON.",
     CurrentValue = true,
     Flag = "AimbotKillToggle",
-    Callback = function(val)
-        settings.aimbotKillCheck = val
-    end,
+    Callback = function(val) settings.aimbotKillCheck = val end,
 })
 
 AimbotTab:CreateSection("FOV Settings", false)
 
-local AimbotFOVToggle = AimbotTab:CreateToggle({
+AimbotTab:CreateToggle({
     Name = "Show Aimbot FOV",
-    Info = "Shows the aimbot FOV circle. OFF by default.",
     CurrentValue = false,
     Flag = "AimbotFOVToggle",
     Callback = function(val)
@@ -538,22 +710,96 @@ local AimbotFOVToggle = AimbotTab:CreateToggle({
 
 AimbotTab:CreateSlider({
     Name = "Aimbot FOV Radius",
-    Info = "Only targets players within this screen radius.",
     Range = {10, 400},
     Increment = 1,
     Suffix = "px",
     CurrentValue = 120,
     Flag = "AimbotFOVSlider",
-    Callback = function(val)
-        settings.aimbotFovRadius = val
+    Callback = function(val) settings.aimbotFovRadius = val end,
+})
+
+AimbotTab:CreateSection("Keybinds", false)
+
+AimbotTab:CreateKeybind({
+    Name = "Toggle Aimbot",
+    CurrentKeybind = "F",
+    HoldToInteract = false,
+    Flag = "AimbotKeybind",
+    Callback = function()
+        local v = not settings.aimbotEnabled
+        settings.aimbotEnabled = v
+        AimbotToggle:Set(v)
+        if not v then
+            aimbotVisible = false
+            for i = 1, FOV_SEGMENTS do aimbotSegs[i].Visible = false end
+        end
+        Rayfield:Notify({
+            Title = v and "Aimbot ON" or "Aimbot OFF",
+            Content = v and "Aimbot active." or "Aimbot disabled.",
+            Duration = 2,
+            Image = 4483362458,
+        })
     end,
 })
 
 -------------------------------------------------
--- TAB 4: Misc
+-- TAB 4: Triggerbot
+-------------------------------------------------
+local TriggerTab = Window:CreateTab("Triggerbot", 4483362458)
+TriggerTab:CreateSection("Triggerbot", false)
+
+local TriggerToggle = TriggerTab:CreateToggle({
+    Name = "Enable Triggerbot",
+    Info = "Auto fires when player is on crosshair. Only works when game is focused.",
+    CurrentValue = false,
+    Flag = "TriggerToggle",
+    Callback = function(val)
+        settings.triggerbotEnabled = val
+        Rayfield:Notify({
+            Title = val and "Triggerbot ON" or "Triggerbot OFF",
+            Content = val and "Auto firing on crosshair targets." or "Triggerbot disabled.",
+            Duration = 2,
+            Image = 4483362458,
+        })
+    end,
+})
+
+TriggerTab:CreateSection("Filters", false)
+
+TriggerTab:CreateToggle({
+    Name = "Wall Check",
+    Info = "Only fires when target is not behind a wall.",
+    CurrentValue = false,
+    Flag = "TriggerWallToggle",
+    Callback = function(val)
+        settings.triggerbotWallCheck = val
+    end,
+})
+
+TriggerTab:CreateSection("Keybinds", false)
+
+TriggerTab:CreateKeybind({
+    Name = "Toggle Triggerbot",
+    CurrentKeybind = "T",
+    HoldToInteract = false,
+    Flag = "TriggerKeybind",
+    Callback = function()
+        local v = not settings.triggerbotEnabled
+        settings.triggerbotEnabled = v
+        TriggerToggle:Set(v)
+        Rayfield:Notify({
+            Title = v and "Triggerbot ON" or "Triggerbot OFF",
+            Content = v and "Auto firing on crosshair targets." or "Triggerbot disabled.",
+            Duration = 2,
+            Image = 4483362458,
+        })
+    end,
+})
+
+-------------------------------------------------
+-- TAB 5: Misc + Config
 -------------------------------------------------
 local MiscTab = Window:CreateTab("Misc", 4483362458)
-
 MiscTab:CreateSection("Misc", false)
 
 MiscTab:CreateButton({
@@ -563,13 +809,128 @@ MiscTab:CreateButton({
     Callback = function()
         Rayfield:Notify({
             Title = "Infinite Yield",
-            Content = "Loading Infinite Yield...",
+            Content = "Loading...",
             Duration = 3,
             Image = 4483362458,
         })
         task.spawn(function()
             loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
         end)
+    end,
+})
+
+MiscTab:CreateSection("Config", false)
+
+MiscTab:CreateInput({
+    Name = "Config Name",
+    Info = "Type a name then press Save.",
+    PlaceholderText = "e.g. MyPreset",
+    RemoveTextAfterFocusLost = false,
+    Flag = "ConfigNameInput",
+    Callback = function(text)
+        configName = tostring(text)
+    end,
+})
+
+MiscTab:CreateButton({
+    Name = "Save Config",
+    Info = "Saves current settings with the name above.",
+    Interact = "Save",
+    Callback = function()
+        local name = configName
+        if not name or name:gsub("%s", "") == "" then
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Type a config name first.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            return
+        end
+        local ok = saveConfig(name)
+        Rayfield:Notify({
+            Title = ok and "Saved!" or "Error",
+            Content = ok and ("Saved as: " .. name) or "Failed to save.",
+            Duration = 3,
+            Image = 4483362458,
+        })
+        if ok then
+            task.wait(0.1)
+            refreshDropdown()
+        end
+    end,
+})
+
+local initialList = getConfigList()
+local dropdownOptions = #initialList > 0 and initialList or {"No configs"}
+local dropdownDefault = dropdownOptions[1]
+selectedConfig = dropdownDefault ~= "No configs" and dropdownDefault or ""
+
+configDropdown = MiscTab:CreateDropdown({
+    Name = "Select Config",
+    Info = "Pick a saved config to load or delete.",
+    Options = dropdownOptions,
+    CurrentOption = dropdownDefault,
+    Flag = "ConfigDropdown",
+    Callback = function(option)
+        if option ~= "No configs" then
+            selectedConfig = option
+        else
+            selectedConfig = ""
+        end
+    end,
+})
+
+MiscTab:CreateButton({
+    Name = "Load Config",
+    Info = "Loads the selected config.",
+    Interact = "Load",
+    Callback = function()
+        if selectedConfig == "" then
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Select a config from the dropdown first.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            return
+        end
+        local ok = loadConfig(selectedConfig)
+        Rayfield:Notify({
+            Title = ok and "Loaded!" or "Error",
+            Content = ok and ("Loaded: " .. selectedConfig) or "Config not found.",
+            Duration = 3,
+            Image = 4483362458,
+        })
+    end,
+})
+
+MiscTab:CreateButton({
+    Name = "Delete Config",
+    Info = "Deletes the selected config.",
+    Interact = "Delete",
+    Callback = function()
+        if selectedConfig == "" then
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Select a config from the dropdown first.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            return
+        end
+        local ok = deleteConfig(selectedConfig)
+        Rayfield:Notify({
+            Title = ok and "Deleted!" or "Error",
+            Content = ok and ("Deleted: " .. selectedConfig) or "Config not found.",
+            Duration = 3,
+            Image = 4483362458,
+        })
+        if ok then
+            selectedConfig = ""
+            task.wait(0.1)
+            refreshDropdown()
+        end
     end,
 })
 
@@ -581,13 +942,13 @@ RunService.Heartbeat:Connect(function()
 
     if settings.camlockEnabled then
         if not camlockTarget then
-            camlockTarget = getClosestTarget(settings.camlockTeamCheck, settings.camlockWallCheck, settings.fovRadius)
+            camlockTarget = getClosestInFOV(settings.camlockTeamCheck, settings.camlockWallCheck, settings.fovRadius)
             targetVisible = false
         else
             local character = camlockTarget.Character
             local hum = character and character:FindFirstChildOfClass("Humanoid")
             if not character or not hum or hum.Health <= 0 then
-                camlockTarget = getClosestTarget(settings.camlockTeamCheck, settings.camlockWallCheck, settings.fovRadius)
+                camlockTarget = getClosestInFOV(settings.camlockTeamCheck, settings.camlockWallCheck, settings.fovRadius)
                 targetVisible = false
             else
                 local canSee = not settings.camlockWallCheck or (localChar ~= nil and canSeeTarget(localChar, character))
@@ -631,66 +992,53 @@ RunService.Heartbeat:Connect(function()
 
     for player, container in pairs(espObjects) do
         local character = player.Character
-
         if not settings.espEnabled or not character then
             container.Visible = false
             continue
         end
-
         if settings.espTeamCheck and isSameTeam(player) then
             container.Visible = false
             continue
         end
-
         local hrp = character:FindFirstChild("HumanoidRootPart")
         local head = character:FindFirstChild("Head")
         if not hrp or not head then
             container.Visible = false
             continue
         end
-
         local dist = getDistance(character)
         if dist > MAX_DISTANCE then
             container.Visible = false
             continue
         end
-
         local topWorld = head.Position + Vector3.new(0, head.Size.Y / 2 + 0.1, 0)
         local botWorld = hrp.Position - Vector3.new(0, 3, 0)
         local topScreen, topVisible = camera:WorldToViewportPoint(topWorld)
         local botScreen = camera:WorldToViewportPoint(botWorld)
-
         if not topVisible then
             container.Visible = false
             continue
         end
-
         container.Visible = true
-
         local boxH = math.abs(botScreen.Y - topScreen.Y)
         local boxW = boxH * 0.6
         container.Position = UDim2.new(0, topScreen.X - boxW / 2, 0, topScreen.Y)
         container.Size = UDim2.new(0, boxW, 0, boxH)
-
         local isCamlockTarget = (camlockTarget == player) and targetVisible
         local boxCol = isCamlockTarget and Color3.fromRGB(255, 220, 0)
             or (not settings.espTeamCheck and isSameTeam(player) and TEAM_COLOR or BOX_COLOR)
-
         for _, child in ipairs(container:GetChildren()) do
             if child:IsA("Frame") and child.Name ~= "HPFill" then
                 child.BackgroundColor3 = boxCol
             end
         end
-
         local hp, maxHp = getHP(character)
         local pct = maxHp > 0 and (hp / maxHp) or 0
-
         local hpFill = container:FindFirstChild("HPFill", true)
         if hpFill then
             hpFill.Size = UDim2.new(1, 0, pct, 0)
             hpFill.BackgroundColor3 = getHPColor(pct)
         end
-
         local infoLabel = container:FindFirstChild("InfoLabel")
         if infoLabel then
             infoLabel.Text = hp .. " HP  |  " .. dist .. "m"
